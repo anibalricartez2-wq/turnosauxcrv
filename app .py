@@ -61,6 +61,10 @@ class Agente:
         self.disp_manana = {mapa_dias[d] for d in dias_m}
         self.disp_tarde = {mapa_dias[d] for d in dias_t}
 
+    def bloquear_fecha(self, fecha):
+        if fecha:
+            self.fechas_bloqueadas.add(fecha)
+
     def esta_disponible(self, fecha, turno, dia_del_mes, total_dias, grilla_actual):
         # 1. Filtro de fechas bloqueadas individuales o licencias
         if fecha in self.fechas_bloqueadas:
@@ -115,47 +119,4 @@ def generar_pdf_cronograma(grilla, resumen_horas, resumen_turnos, anio, mes, usu
     pdf.ln(5)
     
     # Encabezados
-    pdf.set_font("Arial", "B", 10)
-    pdf.set_fill_color(230, 230, 230)
-    pdf.cell(35, 8, "Fecha", border=1, fill=True)
-    pdf.cell(20, 8, "Dia", border=1, fill=True)
-    pdf.cell(65, 8, "Manana (6 a 15 hs)", border=1, fill=True)
-    pdf.cell(65, 8, "Tarde (15 a 24 hs)", border=1, fill=True, ln=True)
-    
-    pdf.set_font("Arial", "", 10)
-    dias_es = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
-    
-    for fecha, turnos in sorted(grilla.items()):
-        dia_str = dias_es[fecha.weekday()]
-        fecha_str = fecha.strftime("%Y-%m-%d")
-        
-        pdf.cell(35, 7, fecha_str, border=1)
-        pdf.cell(20, 7, dia_str[:2], border=1)
-        
-        if turnos['M'] == 'SIN CUBRIR':
-            pdf.set_text_color(200, 0, 0)
-        pdf.cell(65, 7, turnos['M'], border=1)
-        pdf.set_text_color(0, 0, 0)
-        
-        if turnos['T'] == 'SIN CUBRIR':
-            pdf.set_text_color(200, 0, 0)
-        pdf.cell(65, 7, turnos['T'], border=1, ln=True)
-        pdf.set_text_color(0, 0, 0)
-        
-    pdf.ln(10)
-    
-    # Tabla de balances finales
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Resumen de Rendimiento por Agente", ln=True)
-    pdf.set_font("Arial", "", 10)
-    for nombre, horas in resumen_horas.items():
-        t_m = resumen_turnos[nombre]['M']
-        t_t = resumen_turnos[nombre]['T']
-        pdf.cell(0, 6, f"Agente: {nombre:<12} | Horas: {horas} hs | Turnos M: {t_m} | Turnos T: {t_t}", ln=True)
-        
-    # Bloque de auditoría cerrado correctamente
-    pdf.ln(15)
-    pdf.set_font("Arial", "I", 8)
-    pdf.set_text_color(100, 100, 100)
-    fecha_impresion = date.today().strftime("%Y-%m-%d")
-    pdf.cell(0, 5, f"Documento generado electronicamente. Auditor:
+    pdf.set_font("Arial", "B",
