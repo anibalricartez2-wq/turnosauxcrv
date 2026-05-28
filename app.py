@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from fpdf import FPDF
 
 # ==========================================
-# 1. INITIALIZE SESSION STATE
+# 1. INITIALIZE SESSION STATE (MEMORIA)
 # ==========================================
 if "calculado" not in st.session_state:
     st.session_state["calculado"] = False
@@ -43,7 +43,7 @@ def check_password():
     return False
 
 # ==========================================
-# 3. LÓGICA DE NEGOCIO (MOTOR)
+# 3. LÓGICA DE NEGOCIO (MOTOR DE ASIGNACIÓN)
 # ==========================================
 class Agente:
     def __init__(self, nombre, limite_horas_mes=130):
@@ -64,23 +64,26 @@ class Agente:
         if fecha:
             self.fechas_bloqueadas.add(fecha)
 
-    def esta_disponible(self, fecha, turno, dia_m, total_d, grilla):
+    def esta_disponible(self, fecha, turno, grilla):
+        # 1. Filtro de licencias, cursos o días bloqueados
         if fecha in self.fechas_bloqueadas:
             return False
-        if grilla[fecha]['M'] == self.nombre:
-            return False
-        if grilla[fecha]['T'] == self.nombre:
+        # 2. Restricción de doble turno por jornada
+        if grilla[fecha]['M'] == self.nombre or grilla[fecha]['T'] == self.nombre:
             return False
         
+        # 3. Filtro por agenda semanal específica del turno
         dia_semana = fecha.weekday()
         if turno == 'M' and dia_semana not in self.disp_manana:
             return False
         if turno == 'T' and dia_semana not in self.disp_tarde:
             return False
             
+        # 4. Control de tope mensual maximo
         if self.horas_acumuladas + 9 > self.limite_horas_mes:
             return False
             
+        # 5. Regla de fatiga: máximo 3 días de servicio consecutivos
         consecutivos = 0
         for i in range(1, 4):
             previo = fecha - timedelta(days=i)
@@ -93,10 +96,7 @@ class Agente:
                 break
         if consecutivos >= 3:
             return False
-        
-        limite_p = (self.limite_horas_mes * (dia_m / total_d)) + 18 
-        if self.horas_acumuladas > limite_p:
-            return False
+            
         return True
 
 # ==========================================
@@ -183,112 +183,17 @@ restricciones_interfaz = {}
 st.sidebar.header("2. Restricciones por Agente")
 for nom in nombres_agentes:
     with st.sidebar.expander(f"⚙️ Configurar {nom}"):
-        st.write("**Disponibilidad semanal por Turno:**")
+        st.write("**Disponibilidad semanal:**")
         dias_m = st.multiselect(f"Mañana para {nom}", lista_dias, default=lista_dias, key=f"m_{nom}")
         dias_t = st.multiselect(f"Tarde para {nom}", lista_dias, default=lista_dias, key=f"t_{nom}")
         
-        # FIX DE DISEÑO: Activación de selección múltiple independiente en el calendario
-        st.write("**Bloquear fechas en calendario (Sueltas o Rangos):**")
-        fechas_b = st.date_input(
-            f"Seleccionar días para {nom}", 
-            value=None, 
-            key=f"f_{nom}"
-        )
+        st.write("**Bloquear rango (Vacaciones/Licencias):**")
+        rango_b = st.date_input(f"Rango de fechas para {nom}", value=[], key=f"rango_{nom}")
+        
+        st.write("**Bloquear días específicos sueltos:**")
+        sueltos_b = st.text_input(f"Días separados por coma (Ej: 4, 15, 22) para {nom}", key=f"s_{nom}")
         
         restricciones_interfaz[nom] = {
             "dias_m": dias_m,
             "dias_t": dias_t,
-            "fechas_bloq": fechas_b
-        }
-
-if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
-    _, total_dias = calendar.monthrange(anio, mes)
-    agentes_motor = {nom: Agente(nom, horas_max) for nom in nombres_agentes}
-    
-    for nom, data in restricciones_interfaz.items():
-        agentes_motor[nom].configurar_disponibilidad(data["dias_m"], data["dias_t"])
-        fb = data["fechas_bloq"]
-        
-        # Procesamiento dinámico de bloqueos (Soporta rangos o fechas únicas)
-        if isinstance(fb, (list, tuple)):
-            if len(fb) == 2:
-                cursor = fb[0]
-                while cursor <= fb[1]:
-                    agentes_motor[nom].bloquear_fecha(cursor)
-                    cursor += timedelta(days=1)
-            elif len(fb) == 1:
-                agentes_motor[nom].bloquear_fecha(fb[0])
-        elif fb:
-            agentes_motor[nom].bloquear_fecha(fb)
-
-    grilla_resultados = {}
-    for d in range(1, total_dias + 1):
-        f_act = date(anio, mes, d)
-        grilla_resultados[f_act] = {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'}
-        
-    for d in range(1, total_dias + 1):
-        f_act = date(anio, mes, d)
-        for turno in ['M', 'T']:
-            cand = [ag for ag in agentes_motor.values() if ag.esta_disponible(f_act, turno, d, total_dias, grilla_resultados)]
-            if cand:
-                cand.sort(key=lambda x: x.horas_acumuladas)
-                elegido = cand[0]
-                grilla_resultados[f_act][turno] = elegido.nombre
-                elegido.horas_acumuladas += 9
-                elegido.conteo_turnos[turno] += 1
-
-    st.session_state["grilla_resultados"] = grilla_resultados
-    st.session_state["resumen_horas"] = {nom: ag.horas_acumuladas for nom, ag in agentes_motor.items()}
-    st.session_state["resumen_turnos"] = {nom: ag.conteo_turnos for nom, ag in agentes_motor.items()}
-    st.session_state["calculado"] = True
-
-if st.session_state["calculado"]:
-    grilla_resultados = st.session_state["grilla_resultados"]
-    resumen_horas = st.session_state["resumen_horas"]
-    resumen_turnos = st.session_state["resumen_turnos"]
-    
-    col1, col2 = st.columns([2.7, 1.2])
-    with col1:
-        st.subheader("📋 Grilla de Turnos")
-        data_tabla = []
-        for f, t in sorted(grilla_resultados.items()):
-            data_tabla.append({
-                "Fecha": f.strftime("%Y-%m-%d"),
-                "Día": lista_dias[f.weekday()],
-                "Mañana (6-15 hs)": t['M'],
-                "Tarde (15-24 hs)": t['T']
-            })
-        df_mostrar = pd.DataFrame(data_tabla)
-        def color_rojo(val):
-            return 'background-color: #ffcccc' if val == 'SIN CUBRIR' else ''
-        st.dataframe(df_mostrar.style.map(color_rojo, subset=["Mañana (6-15 hs)", "Tarde (15-24 hs)"]), use_container_width=True, height=600)
-
-    with col2:
-        st.subheader("📊 Métricas de Carga")
-        data_tabla_turnos = []
-        for nom in nombres_agentes:
-            horas = resumen_horas[nom]
-            tm = resumen_turnos[nom]['M']
-            tt = resumen_turnos[nom]['T']
-            data_tabla_turnos.append({
-                "Agente": nom,
-                "Turnos M": tm,
-                "Turnos T": tt,
-                "Total Horas": f"{horas} hs"
-            })
-            st.metric(label=f"Horas {nom}", value=f"{horas} hs", delta=f"{horas_max - horas} disp")
-            
-        st.markdown("---")
-        st.subheader("📊 Resumen de Asignaciones")
-        st.table(pd.DataFrame(data_tabla_turnos))
-            
-        st.markdown("---")
-        st.subheader("🖨️ Exportar")
-        pdf_bytes = generar_pdf_cronograma(grilla_resultados, resumen_horas, resumen_turnos, anio, mes, st.session_state['usuario_actual'])
-        st.download_button(
-            label="📥 Descargar PDF Oficial",
-            data=pdf_bytes,
-            file_name=f"cronograma_{mes}_{anio}.pdf",
-            mime="application/pdf",
-            type="primary"
-        )
+            "rango_
