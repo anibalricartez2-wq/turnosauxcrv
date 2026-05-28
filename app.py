@@ -187,8 +187,13 @@ for nom in nombres_agentes:
         dias_m = st.multiselect(f"Mañana para {nom}", lista_dias, default=lista_dias, key=f"m_{nom}")
         dias_t = st.multiselect(f"Tarde para {nom}", lista_dias, default=lista_dias, key=f"t_{nom}")
         
-        st.write("**Bloquear fechas en calendario:**")
-        fechas_b = st.date_input(f"Bloqueos {nom}", value=[], key=f"f_{nom}")
+        # FIX DE DISEÑO: Activación de selección múltiple independiente en el calendario
+        st.write("**Bloquear fechas en calendario (Sueltas o Rangos):**")
+        fechas_b = st.date_input(
+            f"Seleccionar días para {nom}", 
+            value=None, 
+            key=f"f_{nom}"
+        )
         
         restricciones_interfaz[nom] = {
             "dias_m": dias_m,
@@ -203,6 +208,8 @@ if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
     for nom, data in restricciones_interfaz.items():
         agentes_motor[nom].configurar_disponibilidad(data["dias_m"], data["dias_t"])
         fb = data["fechas_bloq"]
+        
+        # Procesamiento dinámico de bloqueos (Soporta rangos o fechas únicas)
         if isinstance(fb, (list, tuple)):
             if len(fb) == 2:
                 cursor = fb[0]
