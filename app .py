@@ -3,7 +3,6 @@ import pandas as pd
 import calendar
 from datetime import date, timedelta
 from fpdf import FPDF
-import io
 
 # ==========================================
 # 1. SISTEMA DE LOGIN CON SECRETS
@@ -14,18 +13,16 @@ def check_password():
         usuario = st.session_state["username"]
         password = st.session_state["password"]
         
-        # Validar credenciales contra los secrets de Streamlit
         if "credenciales" in st.secrets and usuario in st.secrets["credenciales"] and st.secrets["credenciales"][usuario] == password:
             st.session_state["password_correct"] = True
             st.session_state["usuario_actual"] = usuario
-            del st.session_state["password"]  # Borrar clave por seguridad
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if st.session_state.get("password_correct", False):
         return True
 
-    # Interfaz de Login
     st.title("🔒 Acceso Restringido")
     st.markdown("Por favor, ingresá tus credenciales para acceder al planificador.")
     st.text_input("Usuario", key="username")
@@ -45,15 +42,17 @@ class Agente:
         self.nombre = nombre
         self.limite_horas_mes = limite_horas_mes
         self.horas_acumuladas = 0
-        self.disponibilidad = {i: ['M', 'T'] for i in range(7)}
         self.fechas_bloqueadas = set()
+        
+        # Sets para guardar los días habilitados (0=Lunes, 6=Domingo)
+        self.disp_manana = set()
+        self.disp_tarde = set()
 
-    def configurar_disponibilidad(self, dias_bool, turnos):
-        for i, puede in enumerate(dias_bool):
-            if puede:
-                self.disponibilidad[i] = turnos
-            else:
-                self.disponibilidad[i] = []
+    def configurar_disponibilidad(self, dias_m, dias_t):
+        """Recibe listas de días permitidos para cada turno y los convierte a números."""
+        mapa_dias = {"Lu": 0, "Ma": 1, "Mi": 2, "Ju": 3, "Vi": 4, "Sá": 5, "Do": 6}
+        self.disp_manana = {mapa_dias[d] for d in dias_m}
+        self.disp_tarde = {mapa_dias[d] for d in dias_t}
 
     def bloquear_rango_fechas(self, inicio, fin):
         actual = inicio
@@ -61,23 +60,40 @@ class Agente:
             self.fechas_bloqueadas.add(actual)
             actual += timedelta(days=1)
 
-    def esta_disponible(self, fecha, turno, dia_del_mes, total_dias):
-        # Filtro de bloqueos (vacaciones/cursos)
+    def esta_disponible(self, fecha, turno, dia_del_mes, total_dias, grilla_actual):
+        # 1. Filtro de bloqueos (vacaciones/cursos)
         if fecha in self.fechas_bloqueadas:
             return False
         
-        # Filtro de días de la semana y turno permitido
+        # 2. Filtro independiente de días según el turno (M o T)
         dia_semana = fecha.weekday()
-        if turno not in self.disponibilidad[dia_semana]:
+        if turno == 'M' and dia_semana not in self.disp_manana:
+            return False
+        if turno == 'T' and dia_semana not in self.disp_tarde:
             return False
             
-        # Límite estricto mensual
+        # 3. Límite estricto mensual
         duracion = 9 if turno == 'M' else 8
         if self.horas_acumuladas + duracion > self.limite_horas_mes:
             return False
+            
+        # 4. Regla estricta: Máximo 3 días seguidos trabajando
+        consecutivos = 0
+        for i in range(1, 4):
+            dia_previo = fecha - timedelta(days=i)
+            if dia_previo in grilla_actual:
+                # Chequear si este agente trabajó ese día (en cualquier turno)
+                if grilla_actual[dia_previo]['M'] == self.nombre or grilla_actual[dia_previo]['T'] == self.nombre:
+                    consecutivos += 1
+                else:
+                    break # Cortó la racha, tuvo un franco
+            else:
+                break # Llegamos a un día anterior al inicio del mes
+                
+        if consecutivos >= 3:
+            return False
         
-        # Control de ritmo: evita quemar todas las horas en las primeras semanas
-        # Forzando a que los huecos ("SIN CUBRIR") se distribuyan y no queden a fin de mes
+        # 5. Control de ritmo: espaciar huecos
         limite_proporcional = (self.limite_horas_mes * (dia_del_mes / total_dias)) + 18 
         if self.horas_acumuladas > limite_proporcional:
             return False
@@ -114,7 +130,6 @@ def generar_pdf_cronograma(grilla, resumen_horas, anio, mes, usuario_auditor):
         pdf.cell(35, 7, fecha_str, border=1)
         pdf.cell(20, 7, dia_str[:2], border=1)
         
-        # Color rojo para casilleros sin cubrir
         if turnos['M'] == 'SIN CUBRIR':
             pdf.set_text_color(200, 0, 0)
         pdf.cell(65, 7, turnos['M'], border=1)
@@ -142,14 +157,14 @@ def generar_pdf_cronograma(grilla, resumen_horas, anio, mes, usuario_auditor):
     pdf.cell(0, 5, f"Documento generado electronicamente. Auditor: {usuario_auditor.capitalize()}", ln=True)
     pdf.cell(0, 5, f"Fecha de exportacion: {fecha_impresion}", ln=True)
     
-    return pdf.output(dest='S').encode('latin1') # Asegura compatibilidad de caracteres
+    # FIX APLICADO: Retorna los bytes directamente usando fpdf2
+    return bytes(pdf.output())
 
 # ==========================================
 # 4. INTERFAZ PRINCIPAL STREAMLIT
 # ==========================================
 st.set_page_config(page_title="Planificador de Turnos", layout="wide")
 
-# Barrera de Seguridad
 if not check_password():
     st.stop()
 
@@ -166,24 +181,17 @@ horas_max = st.sidebar.number_input("Límite Horas Mensuales", value=130)
 # Panel lateral: Agentes
 nombres_agentes = ["Sanchez", "Barros", "Garcia", "Ricartez"]
 agentes_dict = {nom: Agente(nom, horas_max) for nom in nombres_agentes}
+lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 
 st.sidebar.header("2. Restricciones por Agente")
 for nom in nombres_agentes:
     with st.sidebar.expander(f"⚙️ Configurar {nom}"):
-        st.write("**Días de la semana permitidos:**")
-        cols = st.columns(4)
-        lu = cols[0].checkbox("Lu", value=True, key=f"lu_{nom}")
-        ma = cols[1].checkbox("Ma", value=True, key=f"ma_{nom}")
-        mi = cols[2].checkbox("Mi", value=True, key=f"mi_{nom}")
-        ju = cols[3].checkbox("Ju", value=True, key=f"ju_{nom}")
+        st.write("**Disponibilidad por Turno:**")
+        # Multiselects independientes para Mañana y Tarde
+        dias_m = st.multiselect("Días para turno Mañana", lista_dias, default=lista_dias, key=f"m_{nom}")
+        dias_t = st.multiselect("Días para turno Tarde", lista_dias, default=lista_dias, key=f"t_{nom}")
         
-        cols2 = st.columns(4)
-        vi = cols2[0].checkbox("Vi", value=True, key=f"vi_{nom}")
-        sa = cols2[1].checkbox("Sá", value=True, key=f"sa_{nom}")
-        do = cols2[2].checkbox("Do", value=True, key=f"do_{nom}")
-        
-        turnos_pref = st.multiselect("Turnos permitidos", ["M", "T"], default=["M", "T"], key=f"tur_{nom}")
-        agentes_dict[nom].configurar_disponibilidad([lu, ma, mi, ju, vi, sa, do], turnos_pref)
+        agentes_dict[nom].configurar_disponibilidad(dias_m, dias_t)
         
         st.write("**Fechas Bloqueadas (Licencias/Cursos):**")
         rango = st.date_input("Seleccionar rango", value=[], key=f"bloq_{nom}")
@@ -195,44 +203,42 @@ if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
     _, total_dias = calendar.monthrange(anio, mes)
     grilla_resultados = {}
     
-    # Limpiar grilla
     for d in range(1, total_dias + 1):
         fecha_act = date(anio, mes, d)
         grilla_resultados[fecha_act] = {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'}
         
-    # Asignación de turnos (Prioridad Mañana)
     duracion_turnos = {'M': 9, 'T': 8}
     for turno in ['M', 'T']:
         for d in range(1, total_dias + 1):
             fecha_act = date(anio, mes, d)
-            candidatos = [ag for ag in agentes_dict.values() if ag.esta_disponible(fecha_act, turno, d, total_dias)]
+            
+            # Le pasamos la grilla actual para que revise los 3 días seguidos
+            candidatos = [ag for ag in agentes_dict.values() if ag.esta_disponible(fecha_act, turno, d, total_dias, grilla_resultados)]
             
             if candidatos:
+                # Elige al que tenga menos horas acumuladas
                 candidatos.sort(key=lambda x: x.horas_acumuladas)
                 elegido = candidatos[0]
                 grilla_resultados[fecha_act][turno] = elegido.nombre
                 elegido.horas_acumuladas += duracion_turnos[turno]
 
-    # Mostrar Resultados en dos columnas
+    # Mostrar Resultados
     col1, col2 = st.columns([3, 1])
     
     with col1:
         st.subheader("📋 Grilla de Turnos")
         data_tabla = []
-        dias_es = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
         for f, t in sorted(grilla_resultados.items()):
             data_tabla.append({
                 "Fecha": f.strftime("%Y-%m-%d"),
-                "Día": dias_es[f.weekday()],
+                "Día": lista_dias[f.weekday()],
                 "Mañana (6-15 hs)": t['M'],
                 "Tarde (15-23 hs)": t['T']
             })
         df_mostrar = pd.DataFrame(data_tabla)
         
-        # Resaltar en rojo si falta cubrir
         def color_rojo(val):
-            color = '#ffcccc' if val == 'SIN CUBRIR' else ''
-            return f'background-color: {color}'
+            return 'background-color: #ffcccc' if val == 'SIN CUBRIR' else ''
             
         st.dataframe(df_mostrar.style.map(color_rojo, subset=["Mañana (6-15 hs)", "Tarde (15-23 hs)"]), use_container_width=True, height=600)
 
@@ -246,7 +252,6 @@ if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
         st.markdown("---")
         st.subheader("🖨️ Exportar")
         
-        # Generar PDF pasando el usuario logueado
         pdf_bytes = generar_pdf_cronograma(grilla_resultados, resumen_horas, anio, mes, st.session_state['usuario_actual'])
         
         st.download_button(
