@@ -49,7 +49,6 @@ class Agente:
         self.disp_tarde = set()
 
     def configurar_disponibilidad(self, dias_m, dias_t):
-        """Recibe listas de días permitidos para cada turno y los convierte a números."""
         mapa_dias = {"Lu": 0, "Ma": 1, "Mi": 2, "Ju": 3, "Vi": 4, "Sá": 5, "Do": 6}
         self.disp_manana = {mapa_dias[d] for d in dias_m}
         self.disp_tarde = {mapa_dias[d] for d in dias_t}
@@ -65,35 +64,38 @@ class Agente:
         if fecha in self.fechas_bloqueadas:
             return False
         
-        # 2. Filtro independiente de días según el turno (M o T)
+        # 2. EXCLUSIÓN DEL MISMO DÍA: No puede trabajar dos turnos la misma fecha
+        if grilla_actual[fecha]['M'] == self.nombre or grilla_actual[fecha]['T'] == self.nombre:
+            return False
+        
+        # 3. Filtro independiente de días según el turno (M o T)
         dia_semana = fecha.weekday()
         if turno == 'M' and dia_semana not in self.disp_manana:
             return False
         if turno == 'T' and dia_semana not in self.disp_tarde:
             return False
             
-        # 3. Límite estricto mensual
+        # 4. Límite estricto mensual
         duracion = 9 if turno == 'M' else 8
         if self.horas_acumuladas + duracion > self.limite_horas_mes:
             return False
             
-        # 4. Regla estricta: Máximo 3 días seguidos trabajando
+        # 5. REGLA DE FATIGA: Máximo 3 días seguidos trabajando (en cualquier turno)
         consecutivos = 0
         for i in range(1, 4):
             dia_previo = fecha - timedelta(days=i)
             if dia_previo in grilla_actual:
-                # Chequear si este agente trabajó ese día (en cualquier turno)
                 if grilla_actual[dia_previo]['M'] == self.nombre or grilla_actual[dia_previo]['T'] == self.nombre:
                     consecutivos += 1
                 else:
-                    break # Cortó la racha, tuvo un franco
+                    break  # Tuvo un franco, se corta la racha
             else:
-                break # Llegamos a un día anterior al inicio del mes
+                break  # Llegamos al inicio del mes
                 
         if consecutivos >= 3:
             return False
         
-        # 5. Control de ritmo: espaciar huecos
+        # 6. Control de ritmo: ahora que avanza día a día, distribuye los huecos equitativamente
         limite_proporcional = (self.limite_horas_mes * (dia_del_mes / total_dias)) + 18 
         if self.horas_acumuladas > limite_proporcional:
             return False
@@ -111,7 +113,7 @@ def generar_pdf_cronograma(grilla, resumen_horas, anio, mes, usuario_auditor):
     pdf.cell(0, 10, f"CRONOGRAMA DE TURNOS - {mes}/{anio}", ln=True, align="C")
     pdf.ln(5)
     
-    # Encabezados de Tabla
+    # Encabezados
     pdf.set_font("Arial", "B", 10)
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(35, 8, "Fecha", border=1, fill=True)
@@ -119,7 +121,6 @@ def generar_pdf_cronograma(grilla, resumen_horas, anio, mes, usuario_auditor):
     pdf.cell(65, 8, "Manana (6 a 15 hs)", border=1, fill=True)
     pdf.cell(65, 8, "Tarde (15 a 23 hs)", border=1, fill=True, ln=True)
     
-    # Filas de la Tabla
     pdf.set_font("Arial", "", 10)
     dias_es = ["Lunes", "Martes", "Miercoles", "Jueves", "Viernes", "Sabado", "Domingo"]
     
@@ -142,14 +143,14 @@ def generar_pdf_cronograma(grilla, resumen_horas, anio, mes, usuario_auditor):
         
     pdf.ln(10)
     
-    # Resumen de Horas
+    # Resumen
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, "Resumen de Horas Trabajadas", ln=True)
     pdf.set_font("Arial", "", 10)
     for nombre, horas in resumen_horas.items():
         pdf.cell(0, 6, f"Agente: {nombre:<12} | Horas Asignadas: {horas} hs", ln=True)
         
-    # Pie de página / Auditoría
+    # Auditoría
     pdf.ln(15)
     pdf.set_font("Arial", "I", 8)
     pdf.set_text_color(100, 100, 100)
@@ -157,7 +158,6 @@ def generar_pdf_cronograma(grilla, resumen_horas, anio, mes, usuario_auditor):
     pdf.cell(0, 5, f"Documento generado electronicamente. Auditor: {usuario_auditor.capitalize()}", ln=True)
     pdf.cell(0, 5, f"Fecha de exportacion: {fecha_impresion}", ln=True)
     
-    # FIX APLICADO: Retorna los bytes directamente usando fpdf2
     return bytes(pdf.output())
 
 # ==========================================
@@ -172,13 +172,13 @@ st.title("🗓️ Sistema de Planificación y Rotación de Turnos")
 st.sidebar.markdown(f"**👤 Operador actual:** `{st.session_state['usuario_actual'].capitalize()}`")
 st.sidebar.markdown("---")
 
-# Panel lateral: Período
+# Período
 st.sidebar.header("1. Período a Planificar")
 anio = st.sidebar.number_input("Año", min_value=2024, max_value=2030, value=2026)
 mes = st.sidebar.slider("Mes", min_value=1, max_value=12, value=6)
 horas_max = st.sidebar.number_input("Límite Horas Mensuales", value=130)
 
-# Panel lateral: Agentes
+# Agentes
 nombres_agentes = ["Sanchez", "Barros", "Garcia", "Ricartez"]
 agentes_dict = {nom: Agente(nom, horas_max) for nom in nombres_agentes}
 lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
@@ -187,7 +187,6 @@ st.sidebar.header("2. Restricciones por Agente")
 for nom in nombres_agentes:
     with st.sidebar.expander(f"⚙️ Configurar {nom}"):
         st.write("**Disponibilidad por Turno:**")
-        # Multiselects independientes para Mañana y Tarde
         dias_m = st.multiselect("Días para turno Mañana", lista_dias, default=lista_dias, key=f"m_{nom}")
         dias_t = st.multiselect("Días para turno Tarde", lista_dias, default=lista_dias, key=f"t_{nom}")
         
@@ -198,31 +197,34 @@ for nom in nombres_agentes:
         if len(rango) == 2:
             agentes_dict[nom].bloquear_rango_fechas(rango[0], rango[1])
 
-# Acción principal
+# Ejecución del algoritmo de distribución cronológica
 if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
     _, total_dias = calendar.monthrange(anio, mes)
     grilla_resultados = {}
     
+    # Inicializar la estructura limpia
     for d in range(1, total_dias + 1):
         fecha_act = date(anio, mes, d)
         grilla_resultados[fecha_act] = {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'}
         
     duracion_turnos = {'M': 9, 'T': 8}
-    for turno in ['M', 'T']:
-        for d in range(1, total_dias + 1):
-            fecha_act = date(anio, mes, d)
-            
-            # Le pasamos la grilla actual para que revise los 3 días seguidos
+    
+    # CRUCIAL: El bucle exterior ahora avanza DÍA POR DÍA para mantener la coherencia temporal
+    for d in range(1, total_dias + 1):
+        fecha_act = date(anio, mes, d)
+        
+        # El bucle interior procesa los turnos del día actual (Prioriza Mañana)
+        for turno in ['M', 'T']:
             candidatos = [ag for ag in agentes_dict.values() if ag.esta_disponible(fecha_act, turno, d, total_dias, grilla_resultados)]
             
             if candidatos:
-                # Elige al que tenga menos horas acumuladas
+                # Distribución equitativa basada en la carga real acumulada hasta la fecha
                 candidatos.sort(key=lambda x: x.horas_acumuladas)
                 elegido = candidatos[0]
                 grilla_resultados[fecha_act][turno] = elegido.nombre
                 elegido.horas_acumuladas += duracion_turnos[turno]
 
-    # Mostrar Resultados
+    # Presentación en pantalla
     col1, col2 = st.columns([3, 1])
     
     with col1:
