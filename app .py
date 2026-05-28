@@ -109,7 +109,6 @@ def generar_pdf_cronograma(grilla, res_h, res_t, anio, mes, auditor):
     pdf.cell(0, 10, f"CRONOGRAMA DE TURNOS - {mes}/{anio}", ln=True, align="C")
     pdf.ln(5)
     
-    # Encabezados con líneas cortas para evitar fallos de sintaxis
     pdf.set_font("Arial", "B", 10)
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(35, 8, "Fecha", border=1, fill=True)
@@ -153,8 +152,88 @@ def generar_pdf_cronograma(grilla, res_h, res_t, anio, mes, auditor):
     pdf.set_text_color(100, 100, 100)
     f_imp = date.today().strftime("%Y-%m-%d")
     
-    # Texto de auditoría protegido en variables
     linea_auditor = f"Documento generado electronicamente. Auditor: {auditor.capitalize()}"
     linea_fecha = f"Fecha de exportacion: {f_imp}"
     
-    pdf.cell(0, 5, linea_auditor
+    pdf.cell(0, 5, linea_auditor, ln=True)
+    pdf.cell(0, 5, linea_fecha, ln=True)
+    return bytes(pdf.output())
+
+# ==========================================
+# 5. INTERFAZ DE USUARIO (STREAMLIT)
+# ==========================================
+st.set_page_config(page_title="Planificador de Turnos", layout="wide")
+
+if not check_password():
+    st.stop()
+
+st.title("🗓️ Planificador y Rotación de Turnos")
+st.sidebar.markdown(f"**👤 Operador:** `{st.session_state['usuario_actual'].capitalize()}`")
+st.sidebar.markdown("---")
+
+st.sidebar.header("1. Período a Planificar")
+anio = st.sidebar.number_input("Año", min_value=2024, max_value=2030, value=2026)
+mes = st.sidebar.slider("Mes", min_value=1, max_value=12, value=6)
+horas_max = st.sidebar.number_input("Límite Horas Mensuales", value=130)
+
+nombres_agentes = ["Sanchez", "Barros", "Garcia", "Ricartez"]
+lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
+restricciones_interfaz = {}
+
+st.sidebar.header("2. Restricciones por Agente")
+for nom in nombres_agentes:
+    with st.sidebar.expander(f"⚙️ Configurar {nom}"):
+        st.write("**Disponibilidad semanal por Turno:**")
+        dias_m = st.multiselect(f"Mañana para {nom}", lista_dias, default=lista_dias, key=f"m_{nom}")
+        dias_t = st.multiselect(f"Tarde para {nom}", lista_dias, default=lista_dias, key=f"t_{nom}")
+        
+        st.write("**Bloquear fechas en calendario:**")
+        fechas_b = st.date_input(f"Bloqueos {nom}", value=[], key=f"f_{nom}")
+        
+        restricciones_interfaz[nom] = {
+            "dias_m": dias_m,
+            "dias_t": dias_t,
+            "fechas_bloq": fechas_b
+        }
+
+if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
+    _, total_dias = calendar.monthrange(anio, mes)
+    agentes_motor = {nom: Agente(nom, horas_max) for nom in nombres_agentes}
+    
+    for nom, data in restricciones_interfaz.items():
+        agentes_motor[nom].configurar_disponibilidad(data["dias_m"], data["dias_t"])
+        fb = data["fechas_bloq"]
+        if isinstance(fb, (list, tuple)):
+            if len(fb) == 2:
+                cursor = fb[0]
+                while cursor <= fb[1]:
+                    agentes_motor[nom].bloquear_fecha(cursor)
+                    cursor += timedelta(days=1)
+            elif len(fb) == 1:
+                agentes_motor[nom].bloquear_fecha(fb[0])
+        elif fb:
+            agentes_motor[nom].bloquear_fecha(fb)
+
+    grilla_resultados = {}
+    for d in range(1, total_dias + 1):
+        f_act = date(anio, mes, d)
+        grilla_resultados[f_act] = {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'}
+        
+    for d in range(1, total_dias + 1):
+        f_act = date(anio, mes, d)
+        for turno in ['M', 'T']:
+            cand = [ag for ag in agentes_motor.values() if ag.esta_disponible(f_act, turno, d, total_dias, grilla_resultados)]
+            if cand:
+                cand.sort(key=lambda x: x.horas_acumuladas)
+                elegido = cand[0]
+                grilla_resultados[f_act][turno] = elegido.nombre
+                elegido.horas_acumuladas += 9
+                elegido.conteo_turnos[turno] += 1
+
+    st.session_state["grilla_resultados"] = grilla_resultados
+    st.session_state["resumen_horas"] = {nom: ag.horas_acumuladas for nom, ag in agentes_motor.items()}
+    st.session_state["resumen_turnos"] = {nom: ag.conteo_turnos for nom, ag in agentes_motor.items()}
+    st.session_state["calculado"] = True
+
+if st.session_state["calculado"]:
+    grilla_resultados =
