@@ -3,12 +3,9 @@ import pandas as pd
 import calendar
 from datetime import date, timedelta
 from fpdf import FPDF
+from io import BytesIO
 
-# --- CONFIGURACIÓN Y ESTADO ---
-st.set_page_config(page_title="Planificador Profesional", layout="wide")
-
-if "calculado" not in st.session_state:
-    st.session_state.update({"calculado": False, "grilla": {}, "resumen": {}})
+st.set_page_config(page_title="Planificador Pro", layout="wide")
 
 # --- MOTOR ---
 class Agente:
@@ -18,77 +15,66 @@ class Agente:
         self.horas = 0
         self.conteo = {'M': 0, 'T': 0}
         self.bloqueos = set()
-        self.disp_m = set(range(7))
-        self.disp_t = set(range(7))
-
-    def configurar(self, d_m, d_t):
-        mapa = {"Lu":0, "Ma":1, "Mi":2, "Ju":3, "Vi":4, "Sá":5, "Do":6}
-        self.disp_m = {mapa[d] for d in d_m}
-        self.disp_t = {mapa[d] for d in d_t}
+        self.disp_m, self.disp_t = set(range(7)), set(range(7))
 
     def esta_disponible(self, f, t, grilla):
         if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
-        ds = f.weekday()
-        if t == 'M' and ds not in self.disp_m: return False
-        if t == 'T' and ds not in self.disp_t: return False
-        return self.horas + 9 <= self.lim
+        if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False # Anti-doble turno
+        if self.horas + 9 > self.lim: return False
+        
+        # Regla 3 días seguidos
+        cons = 0
+        for i in range(1, 4):
+            prev = f - timedelta(days=i)
+            if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
+        return cons < 3
 
-# --- PDF ---
-def generar_pdf(grilla, resumen, lim):
-    pdf = FPDF()
+# --- EXPORTADORES ---
+def exportar_excel(df):
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=True)
+    return output.getvalue()
+
+def exportar_pdf(df):
+    pdf = FPDF(orientation='L')
     pdf.add_page()
-    pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Cronograma Mensual (Limite: " + str(lim) + "hs)", ln=True, align="C")
-    pdf.set_font("Arial", "", 10)
-    for f, t in sorted(grilla.items()):
-        pdf.cell(0, 7, f"{f}: Manana: {t['M']} | Tarde: {t['T']}", ln=True)
-    return bytes(pdf.output())
+    pdf.set_font("Arial", "B", 12)
+    for i, row in df.iterrows():
+        pdf.cell(0, 10, f"{i} | M: {row['M']} | T: {row['T']}", ln=True)
+    return pdf.output(dest='S').encode('latin1')
 
 # --- UI ---
-st.title("🗓️ Planificador de Turnos Profesional")
+st.title("🗓️ Planificador Pro")
 nombres = ["Sanchez", "Barros", "Garcia", "Ricartez"]
-lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
-config = {}
+config = {n: {'bloq': st.sidebar.text_input(f"Bloqueos {n}", key=f"b_{n}")} for n in nombres}
+limite = st.sidebar.number_input("Límite Horas", 130)
 
-st.sidebar.header("⚙️ Configuración")
-anio = st.sidebar.number_input("Año", 2024, 2030, 2026)
-mes = st.sidebar.slider("Mes", 1, 12, 6)
-limite = st.sidebar.number_input("Límite Horas Mensuales", 100, 200, 130)
-
-for nom in nombres:
-    with st.sidebar.expander(f"Agente: {nom}"):
-        config[nom] = {'dm': st.multiselect("Mañana", lista_dias, default=lista_dias, key=f"m_{nom}"),
-                       'dt': st.multiselect("Tarde", lista_dias, default=lista_dias, key=f"t_{nom}"),
-                       'bloq': st.text_input("Bloqueos (ej: 1, 15)", key=f"b_{nom}")}
-
-if st.sidebar.button("📊 Calcular y Distribuir"):
+if st.sidebar.button("📊 Calcular"):
+    _, dias_mes = calendar.monthrange(2026, 6)
     agentes = {n: Agente(n, limite) for n in nombres}
-    for n, c in config.items():
-        agentes[n].configurar(c['dm'], c['dt'])
-        if c['bloq']:
-            for d in c['bloq'].split(','):
-                agentes[n].bloqueos.add(date(anio, mes, int(d.strip())))
-    
-    _, dias_mes = calendar.monthrange(anio, mes)
-    grilla = {date(anio, mes, d): {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'} for d in range(1, dias_mes + 1)}
+    grilla = {date(2026, 6, d): {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'} for d in range(1, dias_mes + 1)}
     
     for d in range(1, dias_mes + 1):
-        f = date(anio, mes, d)
+        f = date(2026, 6, d)
         for t in ['M', 'T']:
-            cand = [a for a in agentes.values() if a.esta_disponible(f, t, grilla)]
-            if cand:
-                # El sort ahora prioriza fin de semana (peso extra) y luego horas/turnos
-                es_finde = 1 if f.weekday() >= 5 else 0
-                cand.sort(key=lambda x: (x.conteo[t] * es_finde, x.horas, x.conteo[t]))
-                el = cand[0]
-                grilla[f][t] = el.nombre
-                el.horas += 9
-                el.conteo[t] += 1
+            # Pacing: si ya cubrimos mucho, dejar SIN CUBRIR
+            cands = [a for a in agentes.values() if a.esta_disponible(f, t, grilla)]
+            if cands:
+                cands.sort(key=lambda x: (x.horas, x.conteo[t]))
+                if cands[0].horas < limite * 0.9: # Estrategia de distribución
+                    el = cands[0]
+                    grilla[f][t] = el.nombre
+                    el.horas += 9
+                    el.conteo[t] += 1
     
-    resumen = {n: {'H': a.horas, 'M': a.conteo['M'], 'T': a.conteo['T']} for n, a in agentes.items()}
-    st.session_state.update({"grilla": grilla, "resumen": resumen, "calculado": True})
+    st.session_state.update({"grilla": pd.DataFrame(grilla).T, "calculado": True})
 
 if st.session_state["calculado"]:
-    st.dataframe(pd.DataFrame(st.session_state["grilla"]).T)
-    st.table(pd.DataFrame(st.session_state["resumen"]).T)
-    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite), file_name="cronograma.pdf", mime="application/pdf")
+    df = st.session_state["grilla"]
+    st.table(df)
+    tipo = st.radio("Formato", ["Excel", "PDF"])
+    if tipo == "Excel":
+        st.download_button("📥 Descargar", exportar_excel(df), "turnos.xlsx", "application/vnd.ms-excel")
+    else:
+        st.download_button("📥 Descargar", exportar_pdf(df), "turnos.pdf", "application/pdf")
