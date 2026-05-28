@@ -4,7 +4,9 @@ import calendar
 from datetime import date, timedelta
 from fpdf import FPDF
 
-# Inicializar los estados de memoria para que no se borren los resultados al interactuar
+# ==========================================
+# 1. INITIALIZE SESSION STATE (MEMORIA DE LA APP)
+# ==========================================
 if "calculado" not in st.session_state:
     st.session_state["calculado"] = False
     st.session_state["grilla_resultados"] = {}
@@ -12,7 +14,7 @@ if "calculado" not in st.session_state:
     st.session_state["resumen_turnos"] = {}
 
 # ==========================================
-# 1. SISTEMA DE LOGIN CON SECRETS
+# 2. SISTEMA DE LOGIN CON SECRETS
 # ==========================================
 def check_password():
     """Devuelve True si el usuario ingresó la contraseña correcta."""
@@ -42,7 +44,7 @@ def check_password():
     return False
 
 # ==========================================
-# 2. LÓGICA DE NEGOCIO (AGENTES Y TURNOS)
+# 3. LÓGICA DE NEGOCIO (MOTOR DE ASIGNACIÓN)
 # ==========================================
 class Agente:
     def __init__(self, nombre, limite_horas_mes=130):
@@ -50,11 +52,7 @@ class Agente:
         self.limite_horas_mes = limite_horas_mes
         self.horas_acumuladas = 0
         self.fechas_bloqueadas = set()
-        
-        # Registro exacto de asignaciones
         self.conteo_turnos = {'M': 0, 'T': 0}
-        
-        # Disponibilidad semanal (0=Lunes, 6=Domingo)
         self.disp_manana = set()
         self.disp_tarde = set()
 
@@ -63,28 +61,27 @@ class Agente:
         self.disp_manana = {mapa_dias[d] for d in dias_m}
         self.disp_tarde = {mapa_dias[d] for d in dias_t}
 
-    def bloquear_fecha(self, fecha):
-        if fecha:
-            self.fechas_bloqueadas.add(fecha)
-
     def esta_disponible(self, fecha, turno, dia_del_mes, total_dias, grilla_actual):
+        # 1. Filtro de fechas bloqueadas individuales o licencias
         if fecha in self.fechas_bloqueadas:
             return False
         
+        # 2. Control de doble turno el mismo día
         if grilla_actual[fecha]['M'] == self.nombre or grilla_actual[fecha]['T'] == self.nombre:
             return False
         
+        # 3. Filtro de disponibilidad semanal por turno
         dia_semana = fecha.weekday()
         if turno == 'M' and dia_semana not in self.disp_manana:
             return False
         if turno == 'T' and dia_semana not in self.disp_tarde:
             return False
             
-        duracion = 9
-        if self.horas_acumuladas + duracion > self.limite_horas_mes:
+        # 4. Límite de carga horaria (Ambos turnos de 9hs)
+        if self.horas_acumuladas + 9 > self.limite_horas_mes:
             return False
             
-        # Regla de fatiga: máximo 3 días de servicio consecutivos
+        # 5. Regla de fatiga: Máximo 3 días seguidos de servicio
         consecutivos = 0
         for i in range(1, 4):
             dia_previo = fecha - timedelta(days=i)
@@ -99,6 +96,7 @@ class Agente:
         if consecutivos >= 3:
             return False
         
+        # 6. Distribución armónica (Pacing)
         limite_proporcional = (self.limite_horas_mes * (dia_del_mes / total_dias)) + 18 
         if self.horas_acumuladas > limite_proporcional:
             return False
@@ -106,7 +104,7 @@ class Agente:
         return True
 
 # ==========================================
-# 3. GENERACIÓN DE PDF
+# 4. GENERACIÓN DE PDF COMPATIBLE CON FPDF2
 # ==========================================
 def generar_pdf_cronograma(grilla, resumen_horas, resumen_turnos, anio, mes, usuario_auditor):
     pdf = FPDF()
@@ -116,7 +114,7 @@ def generar_pdf_cronograma(grilla, resumen_horas, resumen_turnos, anio, mes, usu
     pdf.cell(0, 10, f"CRONOGRAMA DE TURNOS - {mes}/{anio}", ln=True, align="C")
     pdf.ln(5)
     
-    # Encabezados de tabla
+    # Encabezados
     pdf.set_font("Arial", "B", 10)
     pdf.set_fill_color(230, 230, 230)
     pdf.cell(35, 8, "Fecha", border=1, fill=True)
@@ -146,7 +144,7 @@ def generar_pdf_cronograma(grilla, resumen_horas, resumen_turnos, anio, mes, usu
         
     pdf.ln(10)
     
-    # Reporte de balances
+    # Tabla de balances finales
     pdf.set_font("Arial", "B", 12)
     pdf.cell(0, 10, "Resumen de Rendimiento por Agente", ln=True)
     pdf.set_font("Arial", "", 10)
@@ -155,133 +153,9 @@ def generar_pdf_cronograma(grilla, resumen_horas, resumen_turnos, anio, mes, usu
         t_t = resumen_turnos[nombre]['T']
         pdf.cell(0, 6, f"Agente: {nombre:<12} | Horas: {horas} hs | Turnos M: {t_m} | Turnos T: {t_t}", ln=True)
         
-    # Bloque de auditoría
+    # Bloque de auditoría cerrado correctamente
     pdf.ln(15)
     pdf.set_font("Arial", "I", 8)
     pdf.set_text_color(100, 100, 100)
     fecha_impresion = date.today().strftime("%Y-%m-%d")
-    pdf.cell(0, 5, f"Documento generado electronicamente. Auditor: {usuario_auditor.capitalize()}", ln=True)
-    pdf.cell(0, 5, f"Fecha de exportacion: {fecha_impresion}", ln=True)
-    
-    return bytes(pdf.output())
-
-# ==========================================
-# 4. INTERFAZ PRINCIPAL STREAMLIT
-# ==========================================
-st.set_page_config(page_title="Planificador de Turnos", layout="wide")
-
-if not check_password():
-    st.stop()
-
-st.title("🗓️ Sistema de Planificación y Rotación de Turnos")
-st.sidebar.markdown(f"**👤 Operador actual:** `{st.session_state['usuario_actual'].capitalize()}`")
-st.sidebar.markdown("---")
-
-# Parámetros del período
-st.sidebar.header("1. Período a Planificar")
-anio = st.sidebar.number_input("Año", min_value=2024, max_value=2030, value=2026)
-mes = st.sidebar.slider("Mes", min_value=1, max_value=12, value=6)
-horas_max = st.sidebar.number_input("Límite Horas Mensuales", value=130)
-
-# Inicialización limpia de agentes
-nombres_agentes = ["Sanchez", "Barros", "Garcia", "Ricartez"]
-agentes_dict = {nom: Agente(nom, horas_max) for nom in nombres_agentes}
-lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
-
-st.sidebar.header("2. Restricciones por Agente")
-for nom in nombres_agentes:
-    with st.sidebar.expander(f"⚙️ Configurar {nom}"):
-        st.write("**Disponibilidad semanal por Turno:**")
-        dias_m = st.multiselect("Días para Mañana (6-15 hs)", lista_dias, default=lista_dias, key=f"m_{nom}")
-        dias_t = st.multiselect("Días para Tarde (15-24 hs)", lista_dias, default=lista_dias, key=f"t_{nom}")
-        agentes_dict[nom].configurar_disponibilidad(dias_m, dias_t)
-        
-        st.write("**Bloquear fechas específicas en el calendario:**")
-        fechas_bloq = st.date_input("Seleccionar rango o día individual", value=[], key=f"fechas_especificas_{nom}")
-        
-        if isinstance(fechas_bloq, (list, tuple)):
-            if len(fechas_bloq) == 2:
-                inicio, fin = fechas_bloq[0], fechas_bloq[1]
-                cursor = inicio
-                while cursor <= fin:
-                    agentes_dict[nom].block_fecha = agentes_dict[nom].bloquear_fecha(cursor)
-                    cursor += timedelta(days=1)
-            elif len(fechas_bloq) == 1:
-                agentes_dict[nom].bloquear_fecha(fechas_bloq[0])
-        elif fechas_bloq:
-            agentes_dict[nom].bloquear_fecha(fechas_bloq)
-
-# Clic en procesar cálculo
-if st.button("📊 Calcular y Distribuir Turnos", type="primary"):
-    _, total_dias = calendar.monthrange(anio, mes)
-    grilla_resultados = {}
-    
-    for d in range(1, total_dias + 1):
-        fecha_act = date(anio, mes, d)
-        grilla_resultados[fecha_act] = {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'}
-        
-    duracion_turnos = {'M': 9, 'T': 9}
-    
-    for d in range(1, total_dias + 1):
-        fecha_act = date(anio, mes, d)
-        for turno in ['M', 'T']:
-            candidatos = [ag for ag in agentes_dict.values() if ag.esta_disponible(fecha_act, turno, d, total_dias, grilla_resultados)]
-            
-            if candidatos:
-                candidatos.sort(key=lambda x: x.horas_acumuladas)
-                elegido = candidatos[0]
-                
-                grilla_resultados[fecha_act][turno] = elegido.nombre
-                elegido.horas_acumuladas += duracion_turnos[turno]
-                elegido.conteo_turnos[turno] += 1
-
-    # PERSISTENCIA: Guardamos todo en la memoria de la sesión
-    st.session_state["grilla_resultados"] = grilla_resultados
-    st.session_state["resumen_horas"] = {nom: ag.horas_acumuladas for nom, ag in agentes_dict.items()}
-    st.session_state["resumen_turnos"] = {nom: ag.conteo_turnos for nom, ag in agentes_dict.items()}
-    st.session_state["calculado"] = True
-
-# RENDERING INDEPENDIENTE: Si ya está calculado, se dibuja siempre (no desaparece)
-if st.session_state["calculado"]:
-    grilla_resultados = st.session_state["grilla_resultados"]
-    resumen_horas = st.session_state["resumen_horas"]
-    resumen_turnos = st.session_state["resumen_turnos"]
-    
-    col1, col2 = st.columns([2.7, 1.2])
-    
-    with col1:
-        st.subheader("📋 Grilla de Turnos")
-        data_tabla = []
-        for f, t in sorted(grilla_resultados.items()):
-            data_tabla.append({
-                "Fecha": f.strftime("%Y-%m-%d"),
-                "Día": lista_dias[f.weekday()],
-                "Mañana (6-15 hs)": t['M'],
-                "Tarde (15-24 hs)": t['T']
-            })
-        df_mostrar = pd.DataFrame(data_tabla)
-        
-        def color_rojo(val):
-            return 'background-color: #ffcccc' if val == 'SIN CUBRIR' else ''
-            
-        st.dataframe(df_mostrar.style.map(color_rojo, subset=["Mañana (6-15 hs)", "Tarde (15-24 hs)"]), use_container_width=True, height=600)
-
-    with col2:
-        st.subheader("📊 Métricas de Carga")
-        
-        data_tabla_turnos = []
-        for nom in nombres_agentes:
-            horas = resumen_horas[nom]
-            t_m = resumen_turnos[nom]['M']
-            t_t = resumen_turnos[nom]['T']
-            
-            data_tabla_turnos.append({
-                "Agente": nom,
-                "Turnos M": t_m,
-                "Turnos T": t_t,
-                "Total Horas": f"{horas} hs"
-            })
-            
-            st.metric(label=f"Horas {nom}", value=f"{horas} hs", delta=f"{horas_max - horas} disp")
-            
-        st.markdown
+    pdf.cell(0, 5, f"Documento generado electronicamente. Auditor:
