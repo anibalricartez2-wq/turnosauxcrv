@@ -65,25 +65,20 @@ class Agente:
             self.fechas_bloqueadas.add(fecha)
 
     def esta_disponible(self, fecha, turno, grilla):
-        # 1. Filtro de licencias, cursos o días bloqueados
         if fecha in self.fechas_bloqueadas:
             return False
-        # 2. Restricción de doble turno por jornada
         if grilla[fecha]['M'] == self.nombre or grilla[fecha]['T'] == self.nombre:
             return False
         
-        # 3. Filtro por agenda semanal específica del turno
         dia_semana = fecha.weekday()
         if turno == 'M' and dia_semana not in self.disp_manana:
             return False
         if turno == 'T' and dia_semana not in self.disp_tarde:
             return False
             
-        # 4. Control de tope mensual maximo
         if self.horas_acumuladas + 9 > self.limite_horas_mes:
             return False
             
-        # 5. Regla de fatiga: máximo 3 días de servicio consecutivos
         consecutivos = 0
         for i in range(1, 4):
             previo = fecha - timedelta(days=i)
@@ -172,28 +167,4 @@ st.sidebar.markdown(f"**👤 Operador:** `{st.session_state['usuario_actual'].ca
 st.sidebar.markdown("---")
 
 st.sidebar.header("1. Período a Planificar")
-anio = st.sidebar.number_input("Año", min_value=2024, max_value=2030, value=2026)
-mes = st.sidebar.slider("Mes", min_value=1, max_value=12, value=6)
-horas_max = st.sidebar.number_input("Límite Horas Mensuales", value=130)
-
-nombres_agentes = ["Sanchez", "Barros", "Garcia", "Ricartez"]
-lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
-restricciones_interfaz = {}
-
-st.sidebar.header("2. Restricciones por Agente")
-for nom in nombres_agentes:
-    with st.sidebar.expander(f"⚙️ Configurar {nom}"):
-        st.write("**Disponibilidad semanal:**")
-        dias_m = st.multiselect(f"Mañana para {nom}", lista_dias, default=lista_dias, key=f"m_{nom}")
-        dias_t = st.multiselect(f"Tarde para {nom}", lista_dias, default=lista_dias, key=f"t_{nom}")
-        
-        st.write("**Bloquear rango (Vacaciones/Licencias):**")
-        rango_b = st.date_input(f"Rango de fechas para {nom}", value=[], key=f"rango_{nom}")
-        
-        st.write("**Bloquear días específicos sueltos:**")
-        sueltos_b = st.text_input(f"Días separados por coma (Ej: 4, 15, 22) para {nom}", key=f"s_{nom}")
-        
-        restricciones_interfaz[nom] = {
-            "dias_m": dias_m,
-            "dias_t": dias_t,
-            "rango_
+anio = st.sidebar.number_input("Año", min_value=
