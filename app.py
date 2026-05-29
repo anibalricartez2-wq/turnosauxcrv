@@ -7,9 +7,11 @@ from io import BytesIO
 
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
+# --- INICIALIZACIÓN ---
 if "calculado" not in st.session_state:
     st.session_state.update({"calculado": False, "grilla": None, "resumen": None})
 
+# --- MOTOR ---
 class Agente:
     def __init__(self, nombre, lim):
         self.nombre = nombre
@@ -34,6 +36,7 @@ class Agente:
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
+# --- PDF ---
 def generar_pdf(df, resumen, limite, mes, anio):
     pdf = FPDF()
     pdf.add_page()
@@ -48,9 +51,9 @@ def generar_pdf(df, resumen, limite, mes, anio):
     pdf.set_font("Arial", "", 8)
     for i, row in df.iterrows():
         pdf.cell(45, 7, str(i), 1)
-        pdf.cell(45, 7, row['Dia'], 1)
-        pdf.cell(45, 7, row['M'], 1)
-        pdf.cell(45, 7, row['T'], 1, ln=True)
+        pdf.cell(45, 7, str(row['Dia']), 1)
+        pdf.cell(45, 7, str(row['M']), 1)
+        pdf.cell(45, 7, str(row['T']), 1, ln=True)
     return pdf.output(dest='S')
 
 # --- UI ---
@@ -62,7 +65,8 @@ config = {}
 st.sidebar.header("⚙️ Configuración")
 anio = st.sidebar.number_input("Año", 2024, 2030, 2026)
 mes = st.sidebar.slider("Mes", 1, 12, 6)
-limite = st.sidebar.number_input("Límite Horas", 130)
+# AQUÍ ESTÁ EL SELECTOR QUE FALTABA
+limite = st.sidebar.number_input("Límite Horas Mensuales", min_value=80, max_value=200, value=130)
 
 for nom in nombres:
     with st.sidebar.expander(f"Agente: {nom}"):
@@ -104,6 +108,8 @@ if st.sidebar.button("📊 Calcular"):
     st.rerun()
 
 if st.session_state.get("calculado"):
+    st.subheader("📋 Grilla de Turnos")
     st.table(st.session_state["grilla"])
+    st.subheader("📊 Resumen por Agente")
     st.table(st.session_state["resumen"])
     st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite, mes, anio), file_name="cronograma.pdf", mime="application/pdf")
