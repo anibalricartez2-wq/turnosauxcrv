@@ -7,9 +7,11 @@ from io import BytesIO
 
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
+# --- INICIALIZACIÓN ---
 if "calculado" not in st.session_state:
     st.session_state.update({"calculado": False, "grilla": None, "resumen": None})
 
+# --- MOTOR ---
 class Agente:
     def __init__(self, nombre, lim):
         self.nombre = nombre
@@ -25,23 +27,31 @@ class Agente:
         self.disp_t = {mapa[d] for d in d_t}
 
     def esta_disponible(self, f, t, grilla):
+        # Chequeo básico: Bloqueos y turno ya asignado
         if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
+        # Anti-doble turno
         if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False
+        # Disponibilidad semanal (NUEVA LÓGICA)
+        ds = f.weekday()
+        if t == 'M' and ds not in self.disp_m: return False
+        if t == 'T' and ds not in self.disp_t: return False
+        # Límite de horas
         if self.horas + 9 > self.lim: return False
+        # Regla 3 días seguidos
         cons = 0
         for i in range(1, 4):
             prev = f - timedelta(days=i)
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- PDF CORREGIDO (USANDO BYTESIO) ---
+# --- PDF ---
 def generar_pdf(df, resumen, limite, mes, anio):
     pdf = FPDF()
     pdf.add_page()
     try: pdf.image('logo_smn.png', 10, 8, 20)
     except: pass
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, f"Cronograma {mes}/{anio}", ln=True, align="C")
+    pdf.cell(0, 10, f"Cronograma {mes}/{anio} (Limite: {limite}hs)", ln=True, align="C")
     pdf.ln(10)
     pdf.set_font("Arial", "B", 8)
     for col in ["Fecha", "Dia", "Manana", "Tarde"]: pdf.cell(45, 7, col, 1, 0, 'C')
@@ -53,13 +63,8 @@ def generar_pdf(df, resumen, limite, mes, anio):
         pdf.cell(45, 7, str(row['M']), 1)
         pdf.cell(45, 7, str(row['T']), 1, ln=True)
     
-    # FORZAR SALIDA A BYTES
-    buffer = BytesIO()
-    pdf.output(dest='F', name=buffer) # O usa la lógica de abajo si la versión es muy nueva
-    # Si da error en la línea anterior, usa esto:
-    buffer.write(pdf.output()) 
-    buffer.seek(0)
-    return buffer
+    # Manejo de bytes para Streamlit
+    return pdf.output(dest='S').encode('latin-1') if isinstance(pdf.output(dest='S'), str) else pdf.output()
 
 # --- UI ---
 st.title("🗓️ Planificador de Turnos SMN")
@@ -112,6 +117,8 @@ if st.sidebar.button("📊 Calcular Turnos"):
     st.rerun()
 
 if st.session_state.get("calculado"):
+    st.subheader("📋 Grilla de Turnos")
     st.table(st.session_state["grilla"])
+    st.subheader("📊 Resumen por Agente")
     st.table(st.session_state["resumen"])
-    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite, mes, anio), file_name="cronograma.pdf", mime="application/pdf")
+    st.download_button("📥 Descargar PDF con Logo", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite, mes, anio), file_name="cronograma.pdf", mime="application/pdf")
