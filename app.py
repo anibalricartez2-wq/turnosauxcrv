@@ -3,13 +3,15 @@ import pandas as pd
 import calendar
 from datetime import date, timedelta
 from fpdf import FPDF
-from io import BytesIO
+from io import BytesIO  # <-- IMPORTANTE: Esto soluciona el problema de bytes
 
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
+# --- INICIALIZACIÓN ---
 if "calculado" not in st.session_state:
     st.session_state.update({"calculado": False, "grilla": None, "resumen": None})
 
+# --- MOTOR ---
 class Agente:
     def __init__(self, nombre, lim):
         self.nombre = nombre
@@ -27,36 +29,39 @@ class Agente:
     def esta_disponible(self, f, t, grilla):
         if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
         if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False
-        if self.horas + 9 > self.lim: return False # Límite estricto
+        if self.horas + 9 > self.lim: return False
         cons = 0
         for i in range(1, 4):
             prev = f - timedelta(days=i)
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
+# --- PDF PROFESIONAL CON BYTESIO ---
 def generar_pdf(df, resumen):
     pdf = FPDF()
     pdf.add_page()
-    # Logo SMN (Asegurate de tener el archivo logo_smn.png en tu repo)
-    try:
-        pdf.image('logo_smn.png', 10, 8, 20)
-    except:
-        pass
     pdf.set_font("Arial", "B", 16)
     pdf.cell(0, 10, "Cronograma Mensual", ln=True, align="C")
     pdf.ln(10)
+    
     # Tabla
     pdf.set_font("Arial", "B", 8)
-    pdf.cell(30, 7, "Fecha", 1)
-    pdf.cell(30, 7, "Manana", 1)
-    pdf.cell(30, 7, "Tarde", 1, ln=True)
+    pdf.cell(40, 7, "Fecha", 1)
+    pdf.cell(40, 7, "Manana", 1)
+    pdf.cell(40, 7, "Tarde", 1, ln=True)
     pdf.set_font("Arial", "", 8)
     for i, row in df.iterrows():
-        pdf.cell(30, 7, str(i), 1)
-        pdf.cell(30, 7, str(row['M']), 1)
-        pdf.cell(30, 7, str(row['T']), 1, ln=True)
-    return pdf.output(dest='S') # fpdf2 compatible
+        pdf.cell(40, 7, str(i), 1)
+        pdf.cell(40, 7, str(row['M']), 1)
+        pdf.cell(40, 7, str(row['T']), 1, ln=True)
+        
+    # Retornar como BytesIO
+    buffer = BytesIO()
+    buffer.write(pdf.output(dest='S').encode('latin1') if isinstance(pdf.output(dest='S'), str) else pdf.output(dest='S'))
+    buffer.seek(0)
+    return buffer
 
+# --- UI ---
 st.title("🗓️ Planificador de Turnos SMN")
 nombres = ["Sanchez", "Barros", "Garcia", "Ricartez"]
 config = {}
