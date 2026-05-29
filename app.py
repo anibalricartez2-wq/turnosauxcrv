@@ -3,7 +3,7 @@ import pandas as pd
 import calendar
 from datetime import date, timedelta
 from fpdf import FPDF
-from io import BytesIO  # <-- IMPORTANTE: Esto soluciona el problema de bytes
+from io import BytesIO
 
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
@@ -36,48 +36,59 @@ class Agente:
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- PDF PROFESIONAL CON BYTESIO ---
-def generar_pdf(df, resumen):
+# --- PDF AVANZADO ---
+def generar_pdf(df, resumen, limite):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Cronograma Mensual", ln=True, align="C")
-    pdf.ln(10)
-    
-    # Tabla
+    pdf.cell(0, 10, "Cronograma Mensual (Limite: " + str(limite) + " hs)", ln=True, align="C")
+    pdf.ln(5)
+    # Tabla Grilla
     pdf.set_font("Arial", "B", 8)
-    pdf.cell(40, 7, "Fecha", 1)
-    pdf.cell(40, 7, "Manana", 1)
-    pdf.cell(40, 7, "Tarde", 1, ln=True)
+    for col in ["Fecha", "Manana", "Tarde"]: pdf.cell(60, 7, col, 1, 0, 'C')
+    pdf.ln()
     pdf.set_font("Arial", "", 8)
     for i, row in df.iterrows():
-        pdf.cell(40, 7, str(i), 1)
-        pdf.cell(40, 7, str(row['M']), 1)
-        pdf.cell(40, 7, str(row['T']), 1, ln=True)
+        pdf.cell(60, 7, str(i), 1)
+        pdf.cell(60, 7, row['M'], 1)
+        pdf.cell(60, 7, row['T'], 1, ln=True)
+    # Tabla Resumen
+    pdf.add_page()
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Detalle de Turnos por Agente", ln=True)
+    pdf.set_font("Arial", "B", 10)
+    for col in ["Agente", "Horas", "Turnos M", "Turnos T"]: pdf.cell(45, 7, col, 1)
+    pdf.ln()
+    pdf.set_font("Arial", "", 10)
+    for n, row in resumen.iterrows():
+        pdf.cell(45, 7, n, 1)
+        pdf.cell(45, 7, str(row['Horas']), 1)
+        pdf.cell(45, 7, str(row['Turnos M']), 1)
+        pdf.cell(45, 7, str(row['Turnos T']), 1, ln=True)
         
-    # Retornar como BytesIO
     buffer = BytesIO()
     buffer.write(pdf.output(dest='S').encode('latin1') if isinstance(pdf.output(dest='S'), str) else pdf.output(dest='S'))
     buffer.seek(0)
     return buffer
 
 # --- UI ---
-st.title("🗓️ Planificador de Turnos SMN")
+st.title("🗓️ Planificador de Turnos Pro")
 nombres = ["Sanchez", "Barros", "Garcia", "Ricartez"]
+lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 config = {}
 
 st.sidebar.header("⚙️ Configuración")
-limite = st.sidebar.number_input("Límite Horas", 130)
+limite = st.sidebar.number_input("Límite Horas Mensuales", min_value=80, max_value=200, value=130)
 
 for nom in nombres:
     with st.sidebar.expander(f"Agente: {nom}"):
         config[nom] = {
-            'dm': st.multiselect("Mañana", ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"], default=["Lu", "Ma", "Mi", "Ju", "Vi"], key=f"m_{nom}"),
-            'dt': st.multiselect("Tarde", ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"], default=["Lu", "Ma", "Mi", "Ju", "Vi"], key=f"t_{nom}"),
+            'dm': st.multiselect("Mañana", lista_dias, default=lista_dias, key=f"m_{nom}"),
+            'dt': st.multiselect("Tarde", lista_dias, default=lista_dias, key=f"t_{nom}"),
             'bloq': st.text_input("Bloqueos (ej: 1, 15)", key=f"b_{nom}")
         }
 
-if st.sidebar.button("📊 Calcular"):
+if st.sidebar.button("📊 Calcular Turnos"):
     agentes = {n: Agente(n, limite) for n in nombres}
     for n, c in config.items():
         agentes[n].configurar(c['dm'], c['dt'])
@@ -98,11 +109,14 @@ if st.sidebar.button("📊 Calcular"):
     
     st.session_state.update({
         "grilla": pd.DataFrame(grilla).T, 
-        "resumen": pd.DataFrame({n: {'H': a.horas, 'M': a.conteo['M'], 'T': a.conteo['T']} for n, a in agentes.items()}).T,
+        "resumen": pd.DataFrame({n: {'Horas': a.horas, 'Turnos M': a.conteo['M'], 'Turnos T': a.conteo['T']} for n, a in agentes.items()}).T,
         "calculado": True
     })
     st.rerun()
 
 if st.session_state.get("calculado"):
+    st.subheader("📋 Grilla de Turnos")
     st.table(st.session_state["grilla"])
-    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"]), file_name="cronograma.pdf", mime="application/pdf")
+    st.subheader("📊 Resumen por Agente")
+    st.table(st.session_state["resumen"])
+    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite), file_name="cronograma.pdf", mime="application/pdf")
