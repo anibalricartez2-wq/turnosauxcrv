@@ -7,11 +7,9 @@ from io import BytesIO
 
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
-# --- INICIALIZACIÓN ---
 if "calculado" not in st.session_state:
     st.session_state.update({"calculado": False, "grilla": None, "resumen": None})
 
-# --- MOTOR ---
 class Agente:
     def __init__(self, nombre, lim):
         self.nombre = nombre
@@ -36,49 +34,35 @@ class Agente:
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- PDF AVANZADO ---
-def generar_pdf(df, resumen, limite):
+def generar_pdf(df, resumen, limite, mes, anio):
     pdf = FPDF()
     pdf.add_page()
+    try: pdf.image('logo_smn.png', 10, 8, 20)
+    except: pass
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, "Cronograma Mensual (Limite: " + str(limite) + " hs)", ln=True, align="C")
-    pdf.ln(5)
-    # Tabla Grilla
+    pdf.cell(0, 10, f"Cronograma {mes}/{anio} (Limite: {limite}hs)", ln=True, align="C")
+    pdf.ln(10)
     pdf.set_font("Arial", "B", 8)
-    for col in ["Fecha", "Manana", "Tarde"]: pdf.cell(60, 7, col, 1, 0, 'C')
+    for col in ["Fecha", "Dia", "Manana", "Tarde"]: pdf.cell(45, 7, col, 1, 0, 'C')
     pdf.ln()
     pdf.set_font("Arial", "", 8)
     for i, row in df.iterrows():
-        pdf.cell(60, 7, str(i), 1)
-        pdf.cell(60, 7, row['M'], 1)
-        pdf.cell(60, 7, row['T'], 1, ln=True)
-    # Tabla Resumen
-    pdf.add_page()
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, "Detalle de Turnos por Agente", ln=True)
-    pdf.set_font("Arial", "B", 10)
-    for col in ["Agente", "Horas", "Turnos M", "Turnos T"]: pdf.cell(45, 7, col, 1)
-    pdf.ln()
-    pdf.set_font("Arial", "", 10)
-    for n, row in resumen.iterrows():
-        pdf.cell(45, 7, n, 1)
-        pdf.cell(45, 7, str(row['Horas']), 1)
-        pdf.cell(45, 7, str(row['Turnos M']), 1)
-        pdf.cell(45, 7, str(row['Turnos T']), 1, ln=True)
-        
-    buffer = BytesIO()
-    buffer.write(pdf.output(dest='S').encode('latin1') if isinstance(pdf.output(dest='S'), str) else pdf.output(dest='S'))
-    buffer.seek(0)
-    return buffer
+        pdf.cell(45, 7, str(i), 1)
+        pdf.cell(45, 7, row['Dia'], 1)
+        pdf.cell(45, 7, row['M'], 1)
+        pdf.cell(45, 7, row['T'], 1, ln=True)
+    return pdf.output(dest='S')
 
 # --- UI ---
-st.title("🗓️ Planificador de Turnos Pro")
+st.title("🗓️ Planificador de Turnos SMN")
 nombres = ["Sanchez", "Barros", "Garcia", "Ricartez"]
 lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 config = {}
 
 st.sidebar.header("⚙️ Configuración")
-limite = st.sidebar.number_input("Límite Horas Mensuales", min_value=80, max_value=200, value=130)
+anio = st.sidebar.number_input("Año", 2024, 2030, 2026)
+mes = st.sidebar.slider("Mes", 1, 12, 6)
+limite = st.sidebar.number_input("Límite Horas", 130)
 
 for nom in nombres:
     with st.sidebar.expander(f"Agente: {nom}"):
@@ -88,16 +72,21 @@ for nom in nombres:
             'bloq': st.text_input("Bloqueos (ej: 1, 15)", key=f"b_{nom}")
         }
 
-if st.sidebar.button("📊 Calcular Turnos"):
+if st.sidebar.button("📊 Calcular"):
     agentes = {n: Agente(n, limite) for n in nombres}
     for n, c in config.items():
         agentes[n].configurar(c['dm'], c['dt'])
         if c['bloq']:
-            for d in c['bloq'].split(','): agentes[n].bloqueos.add(date(2026, 6, int(d.strip())))
+            for d in c['bloq'].split(','): agentes[n].bloqueos.add(date(anio, mes, int(d.strip())))
     
-    grilla = {date(2026, 6, d): {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'} for d in range(1, 31)}
-    for d in range(1, 31):
-        f = date(2026, 6, d)
+    _, dias_mes = calendar.monthrange(anio, mes)
+    grilla = {}
+    for d in range(1, dias_mes + 1):
+        f = date(anio, mes, d)
+        grilla[f] = {'Dia': lista_dias[f.weekday()], 'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'}
+        
+    for d in range(1, dias_mes + 1):
+        f = date(anio, mes, d)
         for t in ['M', 'T']:
             cand = [a for a in agentes.values() if a.esta_disponible(f, t, grilla)]
             if cand:
@@ -115,8 +104,6 @@ if st.sidebar.button("📊 Calcular Turnos"):
     st.rerun()
 
 if st.session_state.get("calculado"):
-    st.subheader("📋 Grilla de Turnos")
     st.table(st.session_state["grilla"])
-    st.subheader("📊 Resumen por Agente")
     st.table(st.session_state["resumen"])
-    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite), file_name="cronograma.pdf", mime="application/pdf")
+    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite, mes, anio), file_name="cronograma.pdf", mime="application/pdf")
