@@ -7,11 +7,9 @@ from io import BytesIO
 
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
-# --- INICIALIZACIÓN ---
 if "calculado" not in st.session_state:
     st.session_state.update({"calculado": False, "grilla": None, "resumen": None})
 
-# --- MOTOR ---
 class Agente:
     def __init__(self, nombre, lim):
         self.nombre = nombre
@@ -29,65 +27,61 @@ class Agente:
     def esta_disponible(self, f, t, grilla):
         if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
         if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False
-        if self.horas + 9 > self.lim: return False
+        if self.horas + 9 > self.lim: return False # Límite estricto
         cons = 0
         for i in range(1, 4):
             prev = f - timedelta(days=i)
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- EXPORTADORES ---
-def exportar_excel(df):
-    output = BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=True)
-    return output.getvalue()
-
-def exportar_pdf(df, resumen):
-    pdf = FPDF(orientation='L')
+def generar_pdf(df, resumen):
+    pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Cronograma Mensual", ln=True)
+    # Logo SMN (Asegurate de tener el archivo logo_smn.png en tu repo)
+    try:
+        pdf.image('logo_smn.png', 10, 8, 20)
+    except:
+        pass
+    pdf.set_font("Arial", "B", 16)
+    pdf.cell(0, 10, "Cronograma Mensual", ln=True, align="C")
+    pdf.ln(10)
+    # Tabla
+    pdf.set_font("Arial", "B", 8)
+    pdf.cell(30, 7, "Fecha", 1)
+    pdf.cell(30, 7, "Manana", 1)
+    pdf.cell(30, 7, "Tarde", 1, ln=True)
     pdf.set_font("Arial", "", 8)
     for i, row in df.iterrows():
-        pdf.cell(0, 7, f"{i} | M: {row['M']} | T: {row['T']}", ln=True)
-    pdf.add_page()
-    pdf.cell(0, 10, "Resumen de Turnos", ln=True)
-    pdf.multi_cell(0, 7, resumen.to_string())
-    # Corrección: fpdf2 devuelve bytes directamente si no se pasa destino
-    return pdf.output()
+        pdf.cell(30, 7, str(i), 1)
+        pdf.cell(30, 7, str(row['M']), 1)
+        pdf.cell(30, 7, str(row['T']), 1, ln=True)
+    return pdf.output(dest='S') # fpdf2 compatible
 
-# --- UI ---
-st.title("🗓️ Planificador Pro")
+st.title("🗓️ Planificador de Turnos SMN")
 nombres = ["Sanchez", "Barros", "Garcia", "Ricartez"]
-lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 config = {}
 
 st.sidebar.header("⚙️ Configuración")
-anio = st.sidebar.number_input("Año", 2024, 2030, 2026)
-mes = st.sidebar.slider("Mes", 1, 12, 6)
 limite = st.sidebar.number_input("Límite Horas", 130)
 
 for nom in nombres:
     with st.sidebar.expander(f"Agente: {nom}"):
-        d_m = st.multiselect("Días Mañana", lista_dias, default=lista_dias, key=f"m_{nom}")
-        d_t = st.multiselect("Días Tarde", lista_dias, default=lista_dias, key=f"t_{nom}")
-        bloq = st.text_input("Días bloqueo (ej: 1, 15)", key=f"b_{nom}")
-        config[nom] = {'dm': d_m, 'dt': d_t, 'bloq': bloq}
+        config[nom] = {
+            'dm': st.multiselect("Mañana", ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"], default=["Lu", "Ma", "Mi", "Ju", "Vi"], key=f"m_{nom}"),
+            'dt': st.multiselect("Tarde", ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"], default=["Lu", "Ma", "Mi", "Ju", "Vi"], key=f"t_{nom}"),
+            'bloq': st.text_input("Bloqueos (ej: 1, 15)", key=f"b_{nom}")
+        }
 
-if st.sidebar.button("📊 Calcular Turnos"):
+if st.sidebar.button("📊 Calcular"):
     agentes = {n: Agente(n, limite) for n in nombres}
     for n, c in config.items():
         agentes[n].configurar(c['dm'], c['dt'])
         if c['bloq']:
-            for d in c['bloq'].split(','):
-                agentes[n].bloqueos.add(date(anio, mes, int(d.strip())))
+            for d in c['bloq'].split(','): agentes[n].bloqueos.add(date(2026, 6, int(d.strip())))
     
-    _, dias_mes = calendar.monthrange(anio, mes)
-    grilla = {date(anio, mes, d): {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'} for d in range(1, dias_mes + 1)}
-    
-    for d in range(1, dias_mes + 1):
-        f = date(anio, mes, d)
+    grilla = {date(2026, 6, d): {'M': 'SIN CUBRIR', 'T': 'SIN CUBRIR'} for d in range(1, 31)}
+    for d in range(1, 31):
+        f = date(2026, 6, d)
         for t in ['M', 'T']:
             cand = [a for a in agentes.values() if a.esta_disponible(f, t, grilla)]
             if cand:
@@ -99,19 +93,11 @@ if st.sidebar.button("📊 Calcular Turnos"):
     
     st.session_state.update({
         "grilla": pd.DataFrame(grilla).T, 
-        "resumen": pd.DataFrame({n: {'Horas': a.horas, 'Turnos M': a.conteo['M'], 'Turnos T': a.conteo['T']} for n, a in agentes.items()}).T,
+        "resumen": pd.DataFrame({n: {'H': a.horas, 'M': a.conteo['M'], 'T': a.conteo['T']} for n, a in agentes.items()}).T,
         "calculado": True
     })
     st.rerun()
 
-if st.session_state.get("calculado", False):
-    st.subheader("📋 Grilla")
+if st.session_state.get("calculado"):
     st.table(st.session_state["grilla"])
-    st.subheader("📊 Resumen")
-    st.table(st.session_state["resumen"])
-    
-    tipo = st.radio("Formato Exportación", ["Excel", "PDF"])
-    if tipo == "Excel":
-        st.download_button("📥 Descargar", exportar_excel(st.session_state["grilla"]), "turnos.xlsx", "application/vnd.ms-excel")
-    else:
-        st.download_button("📥 Descargar", exportar_pdf(st.session_state["grilla"], st.session_state["resumen"]), "turnos.pdf", "application/pdf")
+    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"]), file_name="cronograma.pdf", mime="application/pdf")
