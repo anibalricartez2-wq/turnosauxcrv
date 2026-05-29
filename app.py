@@ -27,24 +27,16 @@ class Agente:
         self.disp_t = {mapa[d] for d in d_t}
 
     def esta_disponible(self, f, t, grilla):
-        # Chequeo básico: Bloqueos y turno ya asignado
         if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
-        # Anti-doble turno
         if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False
-        # Disponibilidad semanal (NUEVA LÓGICA)
-        ds = f.weekday()
-        if t == 'M' and ds not in self.disp_m: return False
-        if t == 'T' and ds not in self.disp_t: return False
-        # Límite de horas
         if self.horas + 9 > self.lim: return False
-        # Regla 3 días seguidos
         cons = 0
         for i in range(1, 4):
             prev = f - timedelta(days=i)
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- PDF ---
+# --- PDF CORREGIDO CON BYTESIO ---
 def generar_pdf(df, resumen, limite, mes, anio):
     pdf = FPDF()
     pdf.add_page()
@@ -63,8 +55,11 @@ def generar_pdf(df, resumen, limite, mes, anio):
         pdf.cell(45, 7, str(row['M']), 1)
         pdf.cell(45, 7, str(row['T']), 1, ln=True)
     
-    # Manejo de bytes para Streamlit
-    return pdf.output(dest='S').encode('latin-1') if isinstance(pdf.output(dest='S'), str) else pdf.output()
+    # SALIDA FORZADA A BYTESIO
+    output = BytesIO()
+    output.write(pdf.output())
+    output.seek(0)
+    return output
 
 # --- UI ---
 st.title("🗓️ Planificador de Turnos SMN")
