@@ -19,7 +19,8 @@ class Agente:
         self.horas = 0
         self.conteo = {'M': 0, 'T': 0}
         self.bloqueos = set()
-        self.disp_m, self.disp_t = set(range(7)), set(range(7))
+        self.disp_m = set(range(7))
+        self.disp_t = set(range(7))
 
     def configurar(self, d_m, d_t):
         mapa = {"Lu":0, "Ma":1, "Mi":2, "Ju":3, "Vi":4, "Sá":5, "Do":6}
@@ -27,23 +28,33 @@ class Agente:
         self.disp_t = {mapa[d] for d in d_t}
 
     def esta_disponible(self, f, t, grilla):
-        if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
+        # Chequeo de Bloqueos
+        if f in self.bloqueos: return False
+        # Chequeo de turno ya asignado
+        if grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
+        # Anti-doble turno (no trabajar M y T el mismo día)
         if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False
+        # Límite de horas
         if self.horas + 9 > self.lim: return False
+        # Disponibilidad por día de semana
+        ds = f.weekday()
+        if t == 'M' and ds not in self.disp_m: return False
+        if t == 'T' and ds not in self.disp_t: return False
+        # Regla 3 días seguidos
         cons = 0
         for i in range(1, 4):
             prev = f - timedelta(days=i)
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- PDF CORREGIDO CON BYTESIO ---
+# --- PDF ---
 def generar_pdf(df, resumen, limite, mes, anio):
     pdf = FPDF()
     pdf.add_page()
     try: pdf.image('logo_smn.png', 10, 8, 20)
     except: pass
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, f"Cronograma {mes}/{anio} (Limite: {limite}hs)", ln=True, align="C")
+    pdf.cell(0, 10, f"Cronograma {mes}/{anio}", ln=True, align="C")
     pdf.ln(10)
     pdf.set_font("Arial", "B", 8)
     for col in ["Fecha", "Dia", "Manana", "Tarde"]: pdf.cell(45, 7, col, 1, 0, 'C')
@@ -54,12 +65,10 @@ def generar_pdf(df, resumen, limite, mes, anio):
         pdf.cell(45, 7, str(row['Dia']), 1)
         pdf.cell(45, 7, str(row['M']), 1)
         pdf.cell(45, 7, str(row['T']), 1, ln=True)
-    
-    # SALIDA FORZADA A BYTESIO
-    output = BytesIO()
-    output.write(pdf.output())
-    output.seek(0)
-    return output
+    buffer = BytesIO()
+    buffer.write(pdf.output())
+    buffer.seek(0)
+    return buffer
 
 # --- UI ---
 st.title("🗓️ Planificador de Turnos SMN")
@@ -70,7 +79,7 @@ config = {}
 st.sidebar.header("⚙️ Configuración")
 anio = st.sidebar.number_input("Año", 2024, 2030, 2026)
 mes = st.sidebar.slider("Mes", 1, 12, 6)
-limite = st.sidebar.number_input("Límite Horas Mensuales", min_value=80, max_value=200, value=130)
+limite = st.sidebar.number_input("Límite Horas", 130)
 
 for nom in nombres:
     with st.sidebar.expander(f"Agente: {nom}"):
@@ -82,10 +91,13 @@ for nom in nombres:
 
 if st.sidebar.button("📊 Calcular Turnos"):
     agentes = {n: Agente(n, limite) for n in nombres}
+    # Aplicar configuraciones ANTES de calcular
     for n, c in config.items():
         agentes[n].configurar(c['dm'], c['dt'])
         if c['bloq']:
-            for d in c['bloq'].split(','): agentes[n].bloqueos.add(date(anio, mes, int(d.strip())))
+            for d in c['bloq'].split(','):
+                d_val = int(d.strip())
+                if 1 <= d_val <= 31: agentes[n].bloqueos.add(date(anio, mes, d_val))
     
     _, dias_mes = calendar.monthrange(anio, mes)
     grilla = {}
@@ -96,10 +108,11 @@ if st.sidebar.button("📊 Calcular Turnos"):
     for d in range(1, dias_mes + 1):
         f = date(anio, mes, d)
         for t in ['M', 'T']:
-            cand = [a for a in agentes.values() if a.esta_disponible(f, t, grilla)]
-            if cand:
-                cand.sort(key=lambda x: (x.horas, x.conteo[t]))
-                el = cand[0]
+            # Solo considerar candidatos que cumplan TODAS las restricciones
+            cands = [a for a in agentes.values() if a.esta_disponible(f, t, grilla)]
+            if cands:
+                cands.sort(key=lambda x: (x.horas, x.conteo[t]))
+                el = cands[0]
                 grilla[f][t] = el.nombre
                 el.horas += 9
                 el.conteo[t] += 1
