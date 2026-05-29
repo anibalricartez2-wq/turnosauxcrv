@@ -85,20 +85,22 @@ if st.sidebar.button("📊 Calcular Turnos"):
     for d in range(1, dias_tot + 1):
         f = date(anio, mes, d)
         for t in ['M', 'T']:
-            # 1. Candidatos que cumplen TODO
+            # Solo consideramos agentes que: 1) Tienen horas, 2) No están bloqueados
+            # Relajamos disponibilidad semanal si es necesario, pero NUNCA el bloqueo
             cands = [a for a in agentes.values() if a.horas + 9 <= a.lim and d not in a.bloqueos and (t=='M' and f.weekday() in a.disp_m or t=='T' and f.weekday() in a.disp_t)]
             
-            # 2. Si no hay candidatos, buscar agentes que al menos NO hayan superado el límite (prioridad máxima al límite de horas)
             if not cands:
-                cands = [a for a in agentes.values() if a.horas + 9 <= a.lim]
+                # Si no hay nadie disponible, buscamos cualquiera que no esté bloqueado ni lleno
+                cands = [a for a in agentes.values() if a.horas + 9 <= a.lim and d not in a.bloqueos]
             
-            # Si a pesar de eso no hay candidatos (todos superaron horas), el día quedará "SIN CUBRIR"
             if cands:
                 cands.sort(key=lambda x: criterio_sort(x, t, d))
-                seleccionado = cands[0]
-                grilla[f][t] = seleccionado.nombre
-                seleccionado.horas += 9
-                seleccionado.conteo[t] += 1
+                sel = cands[0]
+                grilla[f][t] = sel.nombre
+                sel.horas += 9
+                sel.conteo[t] += 1
+            else:
+                grilla[f][t] = "SIN PERSONAL"
     
     st.session_state.update({"grilla": pd.DataFrame(grilla).T, "resumen": pd.DataFrame({n: {'Turnos M': a.conteo['M'], 'Turnos T': a.conteo['T']} for n, a in agentes.items()}).T, "calculado": True})
     st.rerun()
