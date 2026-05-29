@@ -30,7 +30,6 @@ class Agente:
         if f in self.bloqueos or grilla.get(f, {}).get(t) != 'SIN CUBRIR': return False
         if grilla.get(f, {}).get('M' if t == 'T' else 'T') == self.nombre: return False
         if self.horas + 9 > self.lim: return False
-        # Regla 3 días seguidos
         cons = 0
         for i in range(1, 4):
             prev = f - timedelta(days=i)
@@ -54,8 +53,9 @@ def exportar_pdf(df, resumen):
         pdf.cell(0, 7, f"{i} | M: {row['M']} | T: {row['T']}", ln=True)
     pdf.add_page()
     pdf.cell(0, 10, "Resumen de Turnos", ln=True)
-    pdf.cell(0, 7, resumen.to_string(), ln=True)
-    return pdf.output(dest='S').encode('latin1')
+    pdf.multi_cell(0, 7, resumen.to_string())
+    # Corrección: fpdf2 devuelve bytes directamente si no se pasa destino
+    return pdf.output()
 
 # --- UI ---
 st.title("🗓️ Planificador Pro")
@@ -63,7 +63,7 @@ nombres = ["Sanchez", "Barros", "Garcia", "Ricartez"]
 lista_dias = ["Lu", "Ma", "Mi", "Ju", "Vi", "Sá", "Do"]
 config = {}
 
-st.sidebar.header("⚙️ Configuración Agentes")
+st.sidebar.header("⚙️ Configuración")
 anio = st.sidebar.number_input("Año", 2024, 2030, 2026)
 mes = st.sidebar.slider("Mes", 1, 12, 6)
 limite = st.sidebar.number_input("Límite Horas", 130)
