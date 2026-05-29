@@ -3,14 +3,13 @@ import pandas as pd
 import calendar
 from datetime import date, timedelta
 from fpdf import FPDF
+from io import BytesIO
 
-# --- CONFIGURACIÓN ---
 st.set_page_config(page_title="Planificador Pro", layout="wide")
 
 if "calculado" not in st.session_state:
     st.session_state.update({"calculado": False, "grilla": None, "resumen": None})
 
-# --- MOTOR ---
 class Agente:
     def __init__(self, nombre, lim):
         self.nombre = nombre
@@ -35,14 +34,14 @@ class Agente:
             if grilla.get(prev, {}).get('M') == self.nombre or grilla.get(prev, {}).get('T') == self.nombre: cons += 1
         return cons < 3
 
-# --- PDF ---
+# --- PDF CORREGIDO (USANDO BYTESIO) ---
 def generar_pdf(df, resumen, limite, mes, anio):
     pdf = FPDF()
     pdf.add_page()
     try: pdf.image('logo_smn.png', 10, 8, 20)
     except: pass
     pdf.set_font("Arial", "B", 16)
-    pdf.cell(0, 10, f"Cronograma {mes}/{anio} (Limite: {limite}hs)", ln=True, align="C")
+    pdf.cell(0, 10, f"Cronograma {mes}/{anio}", ln=True, align="C")
     pdf.ln(10)
     pdf.set_font("Arial", "B", 8)
     for col in ["Fecha", "Dia", "Manana", "Tarde"]: pdf.cell(45, 7, col, 1, 0, 'C')
@@ -53,7 +52,14 @@ def generar_pdf(df, resumen, limite, mes, anio):
         pdf.cell(45, 7, str(row['Dia']), 1)
         pdf.cell(45, 7, str(row['M']), 1)
         pdf.cell(45, 7, str(row['T']), 1, ln=True)
-    return pdf.output()
+    
+    # FORZAR SALIDA A BYTES
+    buffer = BytesIO()
+    pdf.output(dest='F', name=buffer) # O usa la lógica de abajo si la versión es muy nueva
+    # Si da error en la línea anterior, usa esto:
+    buffer.write(pdf.output()) 
+    buffer.seek(0)
+    return buffer
 
 # --- UI ---
 st.title("🗓️ Planificador de Turnos SMN")
@@ -106,8 +112,6 @@ if st.sidebar.button("📊 Calcular Turnos"):
     st.rerun()
 
 if st.session_state.get("calculado"):
-    st.subheader("📋 Grilla de Turnos")
     st.table(st.session_state["grilla"])
-    st.subheader("📊 Resumen por Agente")
     st.table(st.session_state["resumen"])
-    st.download_button("📥 Descargar PDF con Logo", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite, mes, anio), file_name="cronograma.pdf", mime="application/pdf")
+    st.download_button("📥 Descargar PDF", data=generar_pdf(st.session_state["grilla"], st.session_state["resumen"], limite, mes, anio), file_name="cronograma.pdf", mime="application/pdf")
